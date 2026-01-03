@@ -550,32 +550,6 @@ KETERANGAN WARNA (dalam implementasi):
 // Database Schema untuk Sistem Lelang Online
 // Paste kode ini ke dbdiagram.io
 
-Table users {
-  user_id int [pk, increment]
-  email varchar(255) [unique, not null]
-  password_hash varchar(255) [not null]
-  full_name varchar(255) [not null]
-  phone varchar(20)
-  id_card_number varchar(50) [unique]
-  id_card_type enum('KTP', 'SIM', 'PASSPORT')
-  address text
-  city varchar(100)
-  province varchar(100)
-  postal_code varchar(10)
-  is_verified boolean [default: false]
-  verification_token varchar(255)
-  verification_date timestamp
-  balance decimal(15,2) [default: 0]
-  status enum('active', 'suspended', 'blocked') [default: 'active']
-  created_at timestamp [default: `now()`]
-  updated_at timestamp [default: `now()`]
-  
-  indexes {
-    email
-    phone
-    id_card_number
-  }
-}
 
 Table sellers {
   seller_id int [pk, increment]

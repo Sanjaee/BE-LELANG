@@ -41,13 +41,29 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 		panic("Failed to connect to database: " + err.Error())
 	}
 
-	// Auto migrate
-	if err := db.AutoMigrate(&model.User{}); err != nil {
+	// Auto migrate all models
+	if err := db.AutoMigrate(
+		&model.User{},
+		&model.Seller{},
+		&model.Organizer{},
+		&model.ItemCategory{},
+		&model.AuctionItem{},
+		&model.ItemImage{},
+		&model.AuctionSchedule{},
+		&model.Bid{},
+	); err != nil {
 		panic("Failed to migrate database: " + err.Error())
 	}
 
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
+	sellerRepo := repository.NewSellerRepository(db)
+	organizerRepo := repository.NewOrganizerRepository(db)
+	categoryRepo := repository.NewCategoryRepository(db)
+	itemRepo := repository.NewAuctionItemRepository(db)
+	imageRepo := repository.NewItemImageRepository(db)
+	scheduleRepo := repository.NewAuctionScheduleRepository(db)
+	bidRepo := repository.NewBidRepository(db)
 
 	// Initialize RabbitMQ with retry logic
 	rabbitMQ := initRabbitMQWithRetry(cfg)
@@ -78,8 +94,6 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 						log.Printf("Warning: Failed to start email worker after reconnect: %v", err)
 					} else {
 						log.Println("Email worker started successfully after reconnect")
-						// Update rabbitMQ in authService (we'll need to modify authService to support this)
-						// For now, we'll rely on the reconnect logic in PublishEmail
 						break
 					}
 				}
@@ -89,9 +103,20 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 
 	// Initialize services
 	authService := service.NewAuthServiceWithConfig(userRepo, cfg.JWTSecret, rabbitMQ, cfg)
+	auctionService := service.NewAuctionService(
+		sellerRepo,
+		organizerRepo,
+		categoryRepo,
+		itemRepo,
+		imageRepo,
+		scheduleRepo,
+		bidRepo,
+		userRepo,
+	)
 
 	// Initialize handlers
 	authHandler := NewAuthHandler(authService, cfg.JWTSecret)
+	auctionHandler := NewAuctionHandler(auctionService, cfg.JWTSecret)
 
 	// API routes
 	api := r.Group("/api/v1")
@@ -112,6 +137,52 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 
 			// Protected routes
 			auth.GET("/me", authHandler.AuthMiddleware(), authHandler.GetMe)
+		}
+
+		// Auction routes (public)
+		auctions := api.Group("/auctions")
+		{
+			// Public endpoints for frontend
+			auctions.GET("", auctionHandler.GetAuctionItemsForFrontend)
+			auctions.GET("/:id", auctionHandler.GetAuctionItem)
+			auctions.GET("/:id/bids", auctionHandler.GetItemBids)
+
+			// Categories
+			auctions.GET("/categories", auctionHandler.GetCategories)
+			auctions.GET("/categories/:id", auctionHandler.GetCategory)
+		}
+
+		// Admin auction management (protected)
+		adminAuctions := api.Group("/admin/auctions")
+		adminAuctions.Use(authHandler.AuthMiddleware())
+		{
+			// Sellers
+			adminAuctions.POST("/sellers", auctionHandler.CreateSeller)
+			adminAuctions.GET("/sellers", auctionHandler.GetSellers)
+			adminAuctions.GET("/sellers/:id", auctionHandler.GetSeller)
+
+			// Organizers
+			adminAuctions.POST("/organizers", auctionHandler.CreateOrganizer)
+			adminAuctions.GET("/organizers", auctionHandler.GetOrganizers)
+			adminAuctions.GET("/organizers/:id", auctionHandler.GetOrganizer)
+
+			// Categories
+			adminAuctions.POST("/categories", auctionHandler.CreateCategory)
+
+			// Items
+			adminAuctions.POST("/items", auctionHandler.CreateAuctionItem)
+			adminAuctions.GET("/items", auctionHandler.GetAuctionItems)
+			adminAuctions.PUT("/items/:id", auctionHandler.UpdateAuctionItem)
+			adminAuctions.POST("/items/:id/publish", auctionHandler.PublishAuctionItem)
+			adminAuctions.DELETE("/items/:id", auctionHandler.DeleteAuctionItem)
+		}
+
+		// Bidding routes (protected)
+		bids := api.Group("/bids")
+		bids.Use(authHandler.AuthMiddleware())
+		{
+			bids.POST("", auctionHandler.PlaceBid)
+			bids.GET("/my-bids", auctionHandler.GetUserBids)
 		}
 	}
 
